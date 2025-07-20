@@ -9,7 +9,7 @@ Mathematicians and car manufacturering researchers have been attempting to best 
 
 In this GitHub repository we seek to explore online methods for parameter estimation and explore and test robustness to noise, excitation condition analysis, the introduction of adaptive forgetting factors, and parameter convergence under finite excitation (FE). 
 
-## Methological Description
+## Methodological Description
 1. Online Estimation Parameters:
    - Recursive Least Squares (RLS)
    - Particle Filtering (PF)
