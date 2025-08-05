@@ -41,6 +41,7 @@ def scenario_1_data(case, u_0, v_0, s_0, time, dv_max, dt, true_theta):
         #final_data = [u_t, v_t, s_t]
         rls_filter(u_t, v_t, s_t, time, dt, true_theta, label="Random-Walk_Non-Equilibrium")
 
+
         # Plot Velocities:
         plt.figure(figsize=(12, 5))
         plt.plot(u_t, label="u(t) - Lead Vehicle", color="red")

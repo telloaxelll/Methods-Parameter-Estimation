@@ -1,6 +1,7 @@
 # Import Needed Dependencies: 
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 import os
 
 plot_dir = os.path.join(os.path.dirname(__file__), "plots")
@@ -59,7 +60,22 @@ def rls_filter(u_t, v_t, s_t, time, dt, true_theta, label):
 
     # RLS Algorithm:
     for k in range(1, time):
+        ''' 
+        Debug Issue: 
+        - We know that matrix is ill-conditioned for two scenarios
+          however, it's showing us that matrix X has a condition number of 
+          1. Which cannot simply be since previous numerical results showed that overall data 
+          is not as close which can give us errors. 
+
+        TO-DO: 
+        - Configure via a sanity check on the code to ensure that condition number is being
+          adequately reflected based on the ill conditions of the matrix X. 
+        '''
+
         X = np.array([v_t[k-1], s_t[k-1], u_t[k-1]])
+
+        #X = np.array([v_t[k-1], s_t[k-1], u_t[k-1]])
+
         y = v_t[k]
 
         # Compute Kalman gain
@@ -105,3 +121,11 @@ def rls_filter(u_t, v_t, s_t, time, dt, true_theta, label):
     filename = f"Convergence_Parameters_Scenario_{label}.png"
     plt.savefig(os.path.join(plot_dir, filename))
     plt.close()
+
+    # Stack the full design matrix X using all past samples
+    X_full = np.stack([v_t[:-1], s_t[:-1], u_t[:-1]], axis=1)  # shape: (time-1, 3)
+
+    # Compute condition number
+    condition_number = np.linalg.cond(X_full)
+
+    print(f"[SCENARIO: {label}] Condition Number of X: {condition_number:.2e}")
