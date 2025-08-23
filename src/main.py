@@ -6,7 +6,7 @@ import os
 # Plot Directory: 
 plot_dir = os.path.join(os.path.dirname(__file__), "plots")
 
-np.random.seed(42)
+np.random.seed(41)
 
 time = 900 # number of time steps
 t_axis = np.arange(time)
@@ -17,7 +17,7 @@ s_0 = 50.0 # initial space gap (60 meters)
 u_0 = 33.0 # initial lead velocity (33 m/s)
 v_0 = 31.0 # initial following velocity (31 m/s)
 
-true_theta = np.array([0.08, 0.12, 12.0]) 
+true_theta = np.array([0.08, 0.12, 12.0]) # true theta parameter 
 
 dv_max = 3.0 # maximum acceleration/deceleration (3 m/s^2)
 
