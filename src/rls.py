@@ -1,40 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from functions import invert_gamma
 import os
-
 plot_dir = os.path.join(os.path.dirname(__file__), "plots")
-os.makedirs(plot_dir, exist_ok=True)
 
-"""
-This functions.py file will host all of the necessary functions to execute 
-functions of the Recursive Least Squares. 
-"""
-
-# Invert Gamma Function:  
-def invert_gamma(gamma, dt):
-    """
-    Given gamma1, gamma2, gamma3 = alpha, beta, tau, we are able to directly
-    solve for alpha, beta, tau by using the following equations algebraically:
-    - alpha = gamma2 / dt
-    - beta = gamma3 / dt
-    - tau = ((1 - gamma1 - gamma3) / gamma2)
-    """
-    gamma1, gamma2, gamma3 = gamma
-
-    alpha = gamma2/dt
-    beta  = gamma3/dt
-
-    if abs(alpha) < 1e-8: # Added tolerance for numerical stability
-        # Add print statement for debugging
-        tau = 0.0
-    else:
-        tau = ((1 - gamma1 - gamma3) / gamma2)
-    return alpha, beta, tau
-
-# RLS Filter Function: 
-# note: need to remove scenario paramter from main definition since only scenario 1
-# uses that particular parameter. 
-def kalman_filter(u_t, v_t, s_t, time, dt, true_theta, label):
+def rls_filter(u_t, v_t, s_t, time, dt, true_theta, label):
     """
     Given u_t, v_t, s_t, time, and dt:
     - We will set initial guess for theta vector
@@ -47,8 +17,8 @@ def kalman_filter(u_t, v_t, s_t, time, dt, true_theta, label):
     - Update parameters at each step
     - Update covariance matrix
     """
-    gamma_est = np.array([0.9, 0.01, 0.01])  # some initial guess
-    P = np.eye(3) * 1000.0 # covariance matrix 
+    gamma_est = np.array([0.976, 0.01, 0.01])  # some initial guess from paper
+    P = np.eye(3) * 0.1 # covariance matrix 
 
     gamma_history = np.zeros((time, 3))
     theta_history = np.zeros((time, 3))  # [alpha, beta, tau] at each step - 3 x 900 matrix storing all values of theta
@@ -71,21 +41,22 @@ def kalman_filter(u_t, v_t, s_t, time, dt, true_theta, label):
           adequately reflected based on the ill conditions of the matrix X. 
         '''
 
-        X = np.array([v_t[k-1], s_t[k-1], u_t[k-1]])
+        X = np.array([v_t[k], s_t[k], u_t[k]]) # This is X_k-1 
 
         rank_X = np.linalg.matrix_rank(X)
 
         #X = np.array([v_t[k-1], s_t[k-1], u_t[k-1]])
 
         y = v_t[k]
-        P = (np.eye(3) - np.outer(K, X)).dot(P)
 
-        # Compute Kalman gain
-        denominator = 1.0 + X.T.dot(P).dot(X)
-        K = P.dot(X) / denominator
+        # Add docs later: 
+        sum = 0       
+        for i in range(k):
+            sum += np.outer(X, X)
+        P = np.linalg.inv(sum)
 
         # RLS Update for Gamma Parameters:
-        gamma_est = gamma_est + K * (y - X.T.dot(gamma_est))
+        gamma_est = gamma_est + X.T @ P.T * (y - X.T.dot(gamma_est))
 
         # Store History of Parameter Estimates:
         gamma_history[k] = gamma_est

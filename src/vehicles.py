@@ -1,7 +1,7 @@
 # Import Needed Dependencies: 
 import numpy as np
 import matplotlib.pyplot as plt
-from functions import rls_filter
+from rls import rls_filter
 import os
 
 plot_dir = os.path.join(os.path.dirname(__file__), "plots")
@@ -23,7 +23,7 @@ def scenario_1_data(case, u_0, v_0, s_0, time, dv_max, dt, true_theta):
         """
         for i in range(1, time):
             # Velocity Sample Generation for u(t)
-            u_t[i] = u_t[i - 1] + np.random.normal(loc=0, scale=0.25) # mean 0, std 0.5
+            u_t[i] = u_t[i - 1] + np.random.normal(loc=0, scale=0) # mean 0, std 0.5
 
             # Compute Current Gap and Velocity: 
             s_prev = s_t[i - 1]
@@ -95,7 +95,7 @@ def scenario_1_data(case, u_0, v_0, s_0, time, dv_max, dt, true_theta):
             s_t[i] = s_prev + (u_prev - v_prev) * dt
 
         #final_data = [u_t, v_t, s_t]
-        rls_filter(u_t, v_t, s_t, time, dt, true_theta, label="Random-Walk_Equilibrium")
+        rls_filter(u_t, v_t, s_t, time, dt, true_theta, label="Random-Walk_Non-Equilibrium")
         
         # Plot velocities
         plt.figure(figsize=(12, 5))
