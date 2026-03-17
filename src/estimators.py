@@ -83,70 +83,15 @@ def rls_filter(u_t, v_t, s_t, N, dt, true_theta, label):
     return gamma_history, theta_history
 
 
-# =============================================================================
-# PARTICLE FILTER IMPLEMENTATION (Algorithm 1 from Wang et al. 2020)
-# =============================================================================
+def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q0=None, Q=None, R=None):
 
-def particle_filter(u_t, v_t, s_t, dt, true_theta, label, 
-                    Np=500, 
-                    mu_xa0=None, 
-                    Q0=None, 
-                    Q=None, 
-                    R=None):
-    """
-    Particle Filter for joint state and parameter estimation of CTH-RV model.
-    
-    Following Algorithm 1 from Wang et al. (2020):
-    "Online parameter estimation methods for adaptive cruise control systems"
-    
-    Augmented State: x_a = [s, v, α, β, τ]^T  (Equation 10 in paper)
-    
-    Parameters:
-    -----------
-    u_t : array
-        Lead vehicle velocity time series
-    v_t : array  
-        Following vehicle velocity time series (used as measurements)
-    s_t : array
-        Space gap time series (used as measurements)
-    dt : float
-        Time step (ΔT in the paper)
-    true_theta : array
-        True parameters [α, β, τ] for comparison
-    label : str
-        Scenario label for printing
-    Np : int
-        Number of particles (default 500, as in paper Table I)
-    mu_xa0 : array, optional
-        Initial mean of augmented state [s0, v0, α0, β0, τ0]
-    Q0 : array, optional
-        Initial covariance diagonal for augmented state
-    Q : array, optional
-        Process noise covariance diagonal
-    R : array, optional
-        Measurement noise covariance diagonal
-        
-    Returns:
-    --------
-    theta_history : array (N, 3)
-        Estimated parameters [α, β, τ] at each timestep (MAP estimates)
-    theta_mean_history : array (N, 3)
-        Mean of parameter posterior at each timestep
-    theta_std_history : array (N, 3)
-        Std of parameter posterior at each timestep
-    particles_history : list
-        Full particle states at selected timesteps for plotting
-    """
-    
     # Get data length
     N = min(len(u_t), len(v_t), len(s_t))
     u_t = np.asarray(u_t, dtype=float).reshape(-1)
     v_t = np.asarray(v_t, dtype=float).reshape(-1)
     s_t = np.asarray(s_t, dtype=float).reshape(-1)
     
-    # -----------------------------------------------------------------
     # Default parameters from Table I in the paper
-    # -----------------------------------------------------------------
     if mu_xa0 is None:
         # Initial augmented state mean: [s0, v0, α0, β0, τ0]
         # Paper uses: [37.8, 32.5, 0.1, 0.1, 1.4]
@@ -171,12 +116,9 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
         [0, 1, 0, 0, 0]   # v measurement
     ])
     
-    # -----------------------------------------------------------------
     # INITIALIZATION (k = 0)
     # Draw Np particles from initial distribution p(x_a_0)
-    # Assign equal weights ω_i = 1/Np
-    # -----------------------------------------------------------------
-    
+
     # Draw particles from multivariate normal with mean mu_xa0 and covariance Q0
     particles = np.random.multivariate_normal(mu_xa0, Q0, size=Np)  # Shape: (Np, 5)
     
@@ -190,9 +132,7 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
     # Initialize equal weights
     weights = np.ones(Np) / Np
     
-    # -----------------------------------------------------------------
     # Storage for history
-    # -----------------------------------------------------------------
     theta_history = np.zeros((N, 3))       # MAP estimates [α, β, τ]
     theta_mean_history = np.zeros((N, 3))  # Mean estimates
     theta_std_history = np.zeros((N, 3))   # Std of estimates
@@ -202,23 +142,32 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
     theta_mean_history[0] = np.mean(particles[:, 2:5], axis=0)
     theta_std_history[0] = np.std(particles[:, 2:5], axis=0)
     
-    # Store particles at specific times for PDF plotting (like Figure 2/3 in paper)
-    snapshot_times = [0, N//5, 2*N//5, 3*N//5, N-1]  # 0s, 200s, 400s, 600s, 900s approximately
+    # Store particles at specific times for PDF plotting (Figure 2/3 in the paper).
+    # The original implementation simply picked five evenly spaced indices
+    # (`0`, `N//5`, `2*N//5`, ...).  That works when you only care about
+    # relative progress, but it can be confusing since `dt` converts indices
+    # into seconds.  To reproduce the paper the snapshots correspond to
+    # 0 s, 200 s, 400 s, 600 s and 900 s (or the end of the run).
+    # Convert desired seconds into indices using the time step `dt`.
+    desired_secs = [0, 200, 400, 600, 900]
+    snapshot_times = []
+    for sec in desired_secs:
+        idx = int(sec / dt)
+        if idx >= N:
+            idx = N - 1
+        snapshot_times.append(idx)
+    # ensure the first and last are present and unique
+    snapshot_times = sorted(set([0] + snapshot_times + [N - 1]))
     particles_snapshots = {0: particles[:, 2:5].copy()}
     
     # Process noise standard deviations (for adding noise to particles)
     Q_std = np.sqrt(np.diag(Q))
     R_std = np.sqrt(np.diag(R))
     
-    # -----------------------------------------------------------------
     # MAIN LOOP: k = 1 to N-1
-    # -----------------------------------------------------------------
-    for k in range(1, N):
+    for k in range(1, 900):
         
-        # -------------------------------------------------------------
         # STATE PROPAGATION (Equation 12 in paper)
-        # x_a_k = F_d(x_a_{k-1}, u_{k-1}) + w_k
-        # -------------------------------------------------------------
         
         # Get lead vehicle velocity at previous timestep
         u_prev = u_t[k-1]
@@ -234,7 +183,6 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
             tau_i = particles[i, 4]
             
             # CTH-RV dynamics (Equation 12)
-            # s_k = s_{k-1} + ΔT(u_{k-1} - v_{k-1})
             s_new = s_prev + dt * (u_prev - v_prev)
             
             # v_k = v_{k-1} + ΔT[α(s - τv) + β(u - v)]
@@ -261,17 +209,11 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
         
         particles = particles_new
         
-        # -------------------------------------------------------------
         # STATE UPDATE (Equation 16 in paper)
-        # Update weights based on likelihood of measurement
-        # ω_k^i = ω_{k-1}^i * p(y_k | x_a_k^i)
-        # -------------------------------------------------------------
-        
         # Current measurement: y_k = [s_k, v_k]^T (from data)
         y_k = np.array([s_t[k], v_t[k]])
         
         # Compute likelihood for each particle
-        # p(y_k | x_a_k^i) = N(y_k; C @ x_a_k^i, R)
         for i in range(Np):
             # Predicted measurement from particle
             y_pred = C @ particles[i]  # [s_pred, v_pred]
@@ -286,10 +228,7 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
             # Update weight
             weights[i] *= likelihood
         
-        # -------------------------------------------------------------
         # NORMALIZE WEIGHTS
-        # ω_k^i = ω_k^i / Σ_j ω_k^j
-        # -------------------------------------------------------------
         weight_sum = np.sum(weights)
         if weight_sum > 1e-300:  # Avoid division by zero
             weights = weights / weight_sum
@@ -297,12 +236,8 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
             # If all weights are essentially zero, reinitialize
             weights = np.ones(Np) / Np
         
-        # -------------------------------------------------------------
         # RESAMPLE (Systematic Resampling)
         # Draw particles with probability proportional to weights
-        # -------------------------------------------------------------
-        
-        # Compute effective sample size to decide if resampling is needed
         N_eff = 1.0 / np.sum(weights**2)
         
         if N_eff < Np / 2:  # Resample if effective size drops below threshold
@@ -311,9 +246,7 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
             particles = particles[indices]
             weights = np.ones(Np) / Np  # Reset weights after resampling
         
-        # -------------------------------------------------------------
-        # STORE ESTIMATES
-        # -------------------------------------------------------------
+        # STORE ESTIMATES:
         
         # MAP estimate (particle with highest weight)
         map_idx = np.argmax(weights)
@@ -331,9 +264,6 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
         if k in snapshot_times:
             particles_snapshots[k] = particles[:, 2:5].copy()
     
-    # -----------------------------------------------------------------
-    # PRINT RESULTS
-    # -----------------------------------------------------------------
     alpha_est, beta_est, tau_est = theta_mean_history[-1]
     
     print(f"\n[PARTICLE FILTER - SCENARIO: {label}]")
@@ -355,19 +285,6 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label,
 def systematic_resample(weights):
     """
     Systematic resampling algorithm for particle filter.
-    
-    This is more efficient than multinomial resampling and produces
-    lower variance estimates.
-    
-    Parameters:
-    -----------
-    weights : array
-        Normalized particle weights (must sum to 1)
-        
-    Returns:
-    --------
-    indices : array
-        Indices of resampled particles
     """
     Np = len(weights)
     indices = np.zeros(Np, dtype=int)
@@ -389,9 +306,7 @@ def systematic_resample(weights):
     return indices
 
 
-# =============================================================================
 # PLOTTING FUNCTIONS
-# =============================================================================
 
 def plot_parameter_convergence(theta_history, true_theta, dt, label, method="PF"):
     """
@@ -439,19 +354,8 @@ def plot_parameter_pdfs(particles_snapshots, true_theta, dt, label):
     """
     Plot posterior PDFs of parameters at different time snapshots.
     (Replicates Figure 2/3 from the paper)
-    
-    Parameters:
-    -----------
-    particles_snapshots : dict
-        Dictionary mapping timestep -> particles array (Np, 3)
-    true_theta : array
-        True parameters [α, β, τ]
-    dt : float
-        Time step
-    label : str
-        Scenario label
     """
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(14, 6))
     
     param_names = ['α', 'β', 'τ']
     colors = plt.cm.viridis(np.linspace(0, 0.8, len(particles_snapshots)))
@@ -461,7 +365,7 @@ def plot_parameter_pdfs(particles_snapshots, true_theta, dt, label):
     for i, (ax, name) in enumerate(zip(axes, param_names)):
         for j, t in enumerate(sorted_times):
             particles = particles_snapshots[t]
-            time_label = f'k = {int(t*dt)}s'
+            time_label = f'k = {int(t * dt)}s'
             
             # Compute histogram/KDE
             data = particles[:, i]
@@ -490,20 +394,7 @@ def plot_parameter_pdfs(particles_snapshots, true_theta, dt, label):
 def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history, 
                                        true_theta, dt, label):
     """
-    Plot parameter convergence with uncertainty bands (±1 std).
-    
-    Parameters:
-    -----------
-    theta_mean_history : array (N, 3)
-        Mean parameter estimates at each timestep
-    theta_std_history : array (N, 3)
-        Std of parameter estimates at each timestep
-    true_theta : array
-        True parameters [α, β, τ]
-    dt : float
-        Time step
-    label : str
-        Scenario label
+    Plot parameter convergence with uncertainty bands ((+/-) 1 std).
     """
     N = theta_mean_history.shape[0]
     time_axis = np.arange(N) * dt
@@ -539,24 +430,6 @@ def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history,
 def compare_rls_pf(u_t, v_t, s_t, dt, true_theta, label, Np=500):
     """
     Run both RLS and PF on the same data and compare results.
-    
-    Parameters:
-    -----------
-    u_t, v_t, s_t : arrays
-        Velocity and gap data
-    dt : float
-        Time step
-    true_theta : array
-        True parameters
-    label : str
-        Scenario label
-    Np : int
-        Number of particles for PF
-        
-    Returns:
-    --------
-    fig : matplotlib figure
-        Comparison plot
     """
     N = len(u_t)
     
