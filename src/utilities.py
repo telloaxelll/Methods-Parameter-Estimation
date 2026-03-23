@@ -1,70 +1,93 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 
-# Invert Gamma Function:  
 def invert_gamma(gamma, dt):
     """
-    Given gamma1, gamma2, gamma3 = alpha, beta, tau, we are able to directly
-    solve for alpha, beta, tau by using the following equations algebraically:
-    - alpha = gamma2 / dt
-    - beta = gamma3 / dt
-    - tau = ((1 - gamma1 - gamma3) / gamma2)
+    Recovers alpha, beta, and tau from gamma coefficients.   
+
+    Args:
+    -----
+        gamma (array - length: 3): Gamma array estimated via recursive least squares algorithm. 
+        dt (float): Used measured frequency from (Wang et al., 2020).
+
+    Returns:
+    --------
+        array: Array of length 3 containing the coefficient values for alpha, beta, and tau.
+
+    Notes: 
+    ------
+        Refer to `rls.ipynb` for mathematical derivation of alpha, beta, and tau from gamma vector.
     """
     gamma1, gamma2, gamma3 = gamma
 
     alpha = gamma2/dt
     beta  = gamma3/dt
 
-    if abs(alpha) < 1e-8: # Added tolerance for numerical stability
-        # Add print statement for debugging
-        tau = 0.0
+    # Avoid dividing by very small value of gamma2
+    if abs(alpha) < 1e-8: 
+        tau = 0.0 # fallback in case of instability
     else:
         tau = ((1 - gamma1 - gamma3) / gamma2)
     return alpha, beta, tau
 
 
 def rls_filter(u_t, v_t, s_t, N, dt, true_theta, label):
-    # Length from the data (robust to 'time' mismatches)
+    """
+    Executes the recursive least squares (RLS) filter algorithm for parameter estimation of ACC systems. 
+
+    Args:
+    -----
+        u_t (array - length: 900): Array containing velocity values at time (t) of the leading vehicle. 
+        v_t (array - length: 900): Array cotnaining velocity values at time (t) of the following (ego) vehicle. 
+        s_t (array - length: 900): Array containing the space gap between the lead and ego vehicle at time (t). 
+        N (int): Number of timesteps that the simulation will run for (900).
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        true_theta (array - length: 3): Array containing the true parameter values for alpha, beta, and tau.
+        label (string): Label indicating which scenario is being simulated in this filter.  
+
+    Returns:
+    --------
+        gamma_history (array): Array containing the values of each gamma entry in the vector from timestep 0:900
+        theta_history (array): Array containing the values of each parameter, alpha, beta, and tau from timestep 0:900.
+    """
     N = min(len(u_t), len(v_t), len(s_t))
-    u_t = np.asarray(u_t, dtype=float).reshape(-1)
-    v_t = np.asarray(v_t, dtype=float).reshape(-1)
-    s_t = np.asarray(s_t, dtype=float).reshape(-1)
 
-    # Paper parameters: γ = [γ1, γ2, γ3]^T; initial guess like the paper
-    gamma_est = np.array([0.976, 0.01, 0.01], dtype=float)
+    u_t = np.asarray(u_t, dtype=float).reshape(-1) # converts input data into a workable array
+    v_t = np.asarray(v_t, dtype=float).reshape(-1) # converts input data into a workable array
+    s_t = np.asarray(s_t, dtype=float).reshape(-1) # converts input data into a workable array
 
-    # Histories (store at index k+1 so -1 is the final estimate)
+    gamma_est = np.array([0.976, 0.01, 0.01], dtype=float) # initial gamma_0 from paper 
+
     gamma_history = np.zeros((N, 3), dtype=float)
     theta_history = np.zeros((N, 3), dtype=float)
+
     gamma_history[0] = gamma_est
     theta_history[0] = invert_gamma(gamma_est, dt)
 
-    # Cumulative outer-product S_k = sum_{i=0}^k x_i x_i^T  (paper’s P_k^{-1})
-    S = np.zeros((3, 3), dtype=float)
+    S = (1.0 / 0.1) * np.eye(3, dtype=float) # intitialize matrix S for accumulation of outer products
 
-    for k in range(0, N - 1):  # we need v_{k+1}
-        xk = np.array([v_t[k], s_t[k], u_t[k]], dtype=float)  # X_k row as a 1D vector
-        yk = float(v_t[k + 1])                                 # Y_k = v_{k+1}
+    for k in range(0, N-1): # run from 0 to k-1 to get v_{k+1}
+        xk = np.array([v_t[k], s_t[k], u_t[k]], dtype=float) 
+        yk = float(v_t[k + 1])                                 
 
-        # Update S_k
-        S += np.outer(xk, xk)
+        S += np.outer(xk, xk) # update S_{k}
 
-        # P_k = S_k^{-1}; use pinv when singular (still exact LS at this step)
         try:
             P = np.linalg.inv(S)
         except np.linalg.LinAlgError:
+            # If S is not linearly independent or ill-conditioned we compute the
+            # Moore-Penrose pseudoinverse to gurantee an inverse for computational purposes.
             P = np.linalg.pinv(S)
 
-        # γ̂_k = γ̂_{k-1} + P_k x_k (y_k - x_k^T γ̂_{k-1})
         err = yk - xk.dot(gamma_est)
         gamma_est = gamma_est + (P @ xk) * err
 
-        # store
+        # Store next gamma and theta history values.
         gamma_history[k + 1] = gamma_est
-        theta_history[k + 1] = invert_gamma(gamma_est, dt)
+        theta_history[k + 1] = invert_gamma(gamma_est, dt) # recovers final parameters per iteration
 
     alpha_est_final, beta_est_final, tau_est_final = theta_history[-1]
+
     print(f"\n[SCENARIO: {label}]")
     print("Final estimated alpha = %.3f (true=%.3f)" % (alpha_est_final, true_theta[0]))
     print("Final estimated beta  = %.3f (true=%.3f)"  % (beta_est_final,  true_theta[1]))
@@ -74,17 +97,49 @@ def rls_filter(u_t, v_t, s_t, N, dt, true_theta, label):
     print(f"Beta  Error: {true_theta[1] - beta_est_final:.3f}")
     print(f"Tau   Error: {true_theta[2] - tau_est_final:.3f}")
 
-    # Optional condition number check of the batch X used in the paper’s (7)
+    # Check for condition number of matrix A, as a base metric of numerical stability
     X_full = np.stack([v_t[:-1], s_t[:-1], u_t[:-1]], axis=1).astype(float)
     cond_num = np.linalg.cond(X_full.T @ X_full)
     print(f"[SCENARIO: {label}] cond(X^T X) = {cond_num:.2e}")
 
-    # Return histories if you want to plot outside
     return gamma_history, theta_history
 
-
 def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q0=None, Q=None, R=None):
+    """
+    Executes the particle filter algorithm for parameter estimation of ACC vehicle systems.
 
+    Args:
+    -----
+        u_t (array - length: 900): Array containing velocity values at time (t) of the leading vehicle.
+        v_t (array - length: 900): Array containing velocity values at time (t) of the following (ego) vehicle.
+        s_t (array - length: 900): Array containing the space gap between the lead and ego vehicle at time (t).
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        true_theta (array - length: 3): Array containing the true parameter values for alpha, beta, and tau.
+        label (string): Label indicating which scenario is being simulated in this filter.
+        Np (int, optional): Number of particles used in the filter. Defaults to 500 from paper.
+        mu_xa0 (array - length: 5, optional): Initial augmented state mean vector [s0, v0, alpha_0, beta_0, tau_0]. Defaults to paper values from Table I.
+        Q0 (array - shape: 5x5, optional): Initial covariance matrix for particle initialization. Defaults to diag[0.5, 0.5, 0.2, 0.2, 0.3]^2 from paper.
+        Q (array - shape: 5x5, optional): Process noise covariance matrix. Defaults to diag[0.2, 0.1, 0.01, 0.01, 0.01]^2 from paper.
+        R (array - shape: 2x2, optional): Measurement noise covariance matrix for [s, v] observations. Defaults to diag[0.2, 0.1]^2 from paper.
+
+    Returns:
+    --------
+        theta_history (array): Array of shape (N, 3) containing the MAP estimates of [alpha, beta, tau] at each timestep.
+        theta_mean_history (array): Array of shape (N, 3) containing the weighted mean estimates of [alpha, beta, tau] at each timestep.
+        theta_std_history (array): Array of shape (N, 3) containing the weighted standard deviation of [alpha, beta, tau] at each timestep.
+        particles_snapshots (dict): Dictionary mapping timestep indices to particle arrays of shape (Np, 3) at snapshot times for PDF plotting.
+    
+    Algorithm:
+    ----------
+        1. Initialize parameters and particle set from mu_xa0 and Q0.
+        2. Propagate particles through CTH-RV dynamics (Equation 12).
+        3. Add process noise and enforce physical constraints.
+        4. Update particle weights using Gaussian likelihood of measurement.
+        5. Normalize weights; reinitialize uniformly if all weights collapse.
+        6. Resample via systematic resampling when effective sample size drops below Np/2.
+        7. Store MAP, mean, and std estimates of [alpha, beta, tau] at each timestep.
+    """
+    
     # Get data length
     N = min(len(u_t), len(v_t), len(s_t))
     u_t = np.asarray(u_t, dtype=float).reshape(-1)
@@ -110,19 +165,16 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q
         R = np.diag([0.2, 0.1])**2
     
     # Measurement matrix C (Equation 13): we observe s and v, not parameters
-    # y = C @ x_a, where y = [s, v]^T
     C = np.array([
         [1, 0, 0, 0, 0],  # s measurement
         [0, 1, 0, 0, 0]   # v measurement
     ])
-    
-    # INITIALIZATION (k = 0)
-    # Draw Np particles from initial distribution p(x_a_0)
 
-    # Draw particles from multivariate normal with mean mu_xa0 and covariance Q0
-    particles = np.random.multivariate_normal(mu_xa0, Q0, size=Np)  # Shape: (Np, 5)
+    particles = np.random.multivariate_normal(mu_xa0, Q0, size=Np)
     
-    # Ensure physical constraints on initial particles
+    # Ensure physical constraints for space gap, velocity, and parameters.
+    # Gaussian distribution can draw negative values occasionally, these contraints
+    # ensure we get values that satisfy realistic conditions.
     particles[:, 0] = np.maximum(particles[:, 0], 1.0)    # s > 0
     particles[:, 1] = np.maximum(particles[:, 1], 0.0)    # v >= 0
     particles[:, 2] = np.maximum(particles[:, 2], 0.001)  # α > 0
@@ -142,13 +194,7 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q
     theta_mean_history[0] = np.mean(particles[:, 2:5], axis=0)
     theta_std_history[0] = np.std(particles[:, 2:5], axis=0)
     
-    # Store particles at specific times for PDF plotting (Figure 2/3 in the paper).
-    # The original implementation simply picked five evenly spaced indices
-    # (`0`, `N//5`, `2*N//5`, ...).  That works when you only care about
-    # relative progress, but it can be confusing since `dt` converts indices
-    # into seconds.  To reproduce the paper the snapshots correspond to
-    # 0 s, 200 s, 400 s, 600 s and 900 s (or the end of the run).
-    # Convert desired seconds into indices using the time step `dt`.
+    # Plotting features
     desired_secs = [0, 200, 400, 600, 900]
     snapshot_times = []
     for sec in desired_secs:
@@ -165,7 +211,7 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q
     R_std = np.sqrt(np.diag(R))
     
     # MAIN LOOP: k = 1 to N-1
-    for k in range(1, 900):
+    for k in range(1, N):
         
         # STATE PROPAGATION (Equation 12 in paper)
         
@@ -240,11 +286,10 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q
         # Draw particles with probability proportional to weights
         N_eff = 1.0 / np.sum(weights**2)
         
-        if N_eff < Np / 2:  # Resample if effective size drops below threshold
-            # Systematic resampling
-            indices = systematic_resample(weights)
-            particles = particles[indices]
-            weights = np.ones(Np) / Np  # Reset weights after resampling
+        # AFTER
+        indices = systematic_resample(weights)
+        particles = particles[indices]
+        weights = np.ones(Np) / Np  # weights reset per Algorithm 1
         
         # STORE ESTIMATES:
         
@@ -284,7 +329,21 @@ def particle_filter(u_t, v_t, s_t, dt, true_theta, label, Np=500, mu_xa0=None, Q
 
 def systematic_resample(weights):
     """
-    Systematic resampling algorithm for particle filter.
+    Performs systematic resampling to draw particle indices proportional to their weights.
+
+    Args:
+    -----
+        weights (array - length: Np): Normalized particle weights summing to 1.
+
+    Returns:
+    --------
+        indices (array - length: Np): Resampled particle indices drawn proportionally to weights.
+
+    Notes:
+    ------
+        Systematic resampling uses a single random offset and deterministically spaces
+        the remaining samples, reducing variance compared to multinomial resampling.
+        Refer to `pf.ipynb` for context on when resampling is triggered during the filter.
     """
     Np = len(weights)
     indices = np.zeros(Np, dtype=int)
@@ -310,20 +369,19 @@ def systematic_resample(weights):
 
 def plot_parameter_convergence(theta_history, true_theta, dt, label, method="PF"):
     """
-    Plot parameter convergence over time.
-    
-    Parameters:
-    -----------
-    theta_history : array (N, 3)
-        Estimated parameters at each timestep
-    true_theta : array
-        True parameters [α, β, τ]
-    dt : float
-        Time step
-    label : str
-        Scenario label
-    method : str
-        Method name for title
+    Plots the convergence of estimated parameters alpha, beta, and tau over time.
+
+    Args:
+    -----
+        theta_history (array - shape: Nx3): Estimated parameters [alpha, beta, tau] at each timestep.
+        true_theta (array - length: 3): True parameter values [alpha, beta, tau].
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        label (string): Label indicating which scenario is being plotted.
+        method (string, optional): Name of the estimation method used in the plot title. Defaults to "PF".
+
+    Returns:
+    --------
+        fig (matplotlib.figure.Figure): Figure object containing the three-panel convergence plot.
     """
     N = theta_history.shape[0]
     time_axis = np.arange(N) * dt  # Convert to seconds
@@ -352,8 +410,24 @@ def plot_parameter_convergence(theta_history, true_theta, dt, label, method="PF"
 
 def plot_parameter_pdfs(particles_snapshots, true_theta, dt, label):
     """
-    Plot posterior PDFs of parameters at different time snapshots.
-    (Replicates Figure 2/3 from the paper)
+    Plots the posterior PDFs of parameters alpha, beta, and tau at multiple time snapshots.
+
+    Args:
+    -----
+        particles_snapshots (dict): Dictionary mapping timestep indices to particle arrays of
+            shape (Np, 3) containing [alpha, beta, tau] values at each snapshot time.
+        true_theta (array - length: 3): True parameter values [alpha, beta, tau].
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        label (string): Label indicating which scenario is being plotted.
+
+    Returns:
+    --------
+        fig (matplotlib.figure.Figure): Figure object containing the three-panel PDF plot.
+
+    Notes:
+    ------
+        Replicates Figures 2 and 3 from (Wang et al., 2020). PDFs are approximated
+        via normalized histograms of the particle distribution at each snapshot time.
     """
     fig, axes = plt.subplots(1, 3, figsize=(14, 6))
     
@@ -391,10 +465,22 @@ def plot_parameter_pdfs(particles_snapshots, true_theta, dt, label):
     return fig
 
 
-def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history, 
+def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history,
                                        true_theta, dt, label):
     """
-    Plot parameter convergence with uncertainty bands ((+/-) 1 std).
+    Plots parameter convergence over time with +/- 1 standard deviation uncertainty bands.
+
+    Args:
+    -----
+        theta_mean_history (array - shape: Nx3): Weighted mean estimates of [alpha, beta, tau] at each timestep.
+        theta_std_history (array - shape: Nx3): Weighted standard deviations of [alpha, beta, tau] at each timestep.
+        true_theta (array - length: 3): True parameter values [alpha, beta, tau].
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        label (string): Label indicating which scenario is being plotted.
+
+    Returns:
+    --------
+        fig (matplotlib.figure.Figure): Figure object containing the three-panel convergence plot with shaded uncertainty bands.
     """
     N = theta_mean_history.shape[0]
     time_axis = np.arange(N) * dt
@@ -429,7 +515,24 @@ def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history,
 
 def compare_rls_pf(u_t, v_t, s_t, dt, true_theta, label, Np=500):
     """
-    Run both RLS and PF on the same data and compare results.
+    Runs both the RLS filter and particle filter on the same trajectory data and plots a side-by-side comparison.
+
+    Args:
+    -----
+        u_t (array - length: 900): Array containing velocity values at time (t) of the leading vehicle.
+        v_t (array - length: 900): Array containing velocity values at time (t) of the following (ego) vehicle.
+        s_t (array - length: 900): Array containing the space gap between the lead and ego vehicle at time (t).
+        dt (float): Used measured frequency from (Wang et al., 2020).
+        true_theta (array - length: 3): Array containing the true parameter values for alpha, beta, and tau.
+        label (string): Label indicating which scenario is being simulated.
+        Np (int, optional): Number of particles used in the particle filter. Defaults to 500.
+
+    Returns:
+    --------
+        fig (matplotlib.figure.Figure): Figure object containing the RLS vs PF comparison plot.
+        theta_hist_rls (array - shape: Nx3): RLS parameter estimates [alpha, beta, tau] at each timestep.
+        theta_mean_pf (array - shape: Nx3): Particle filter weighted mean estimates of [alpha, beta, tau] at each timestep.
+        particles_snap (dict): Dictionary of particle snapshots at selected timesteps from the particle filter.
     """
     N = len(u_t)
     
