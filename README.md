@@ -1,4 +1,4 @@
-# Methods for Parameter Estimation in Adaptive Cruise Control 
+# Methods of Parameter Estimation for Adaptive Cruise Control Systems
 
 ## Introduction
 
@@ -16,6 +16,8 @@ In our simulations we implement:
 3. Induced Road Curvature - induced road curvature that tests responsiveness and numerical stability of algorithms 
 4. Suburban Environemnt - tests algorithms under an suburban based environment, it includes: speed bumps, stop signs, pedestrians, etc. 
 5. Aggressive Lead Driver - simulates an aggressive, and erratic driver and models how robust these algorithms are under aggressive-like driving behavior. 
+
+### Repository Structure 
 
 ## References
 This repository references the following research papers to conduct and implement all simulations
