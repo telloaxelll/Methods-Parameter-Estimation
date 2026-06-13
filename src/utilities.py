@@ -483,7 +483,7 @@ def plot_convergence_with_uncertainty(theta_mean_history, theta_std_history,
         fig (matplotlib.figure.Figure): Figure object containing the three-panel convergence plot with shaded uncertainty bands.
     """
     N = theta_mean_history.shape[0]
-    time_axis = np.arange(N) * dt
+    time_axis = np.arange(N) 
     
     fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     
@@ -551,7 +551,7 @@ def compare_rls_pf(u_t, v_t, s_t, dt, true_theta, label, Np=500):
     )
     
     # Plot comparison
-    time_axis = np.arange(N) * dt
+    time_axis = np.arange(N)
     
     fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
     
